@@ -35,3 +35,6 @@ secrets.properties
 *.hprof
 .DS_Store
 Thumbs.db
+
+# Kotlin compiler local cache
+.kotlin/

@@ -1,0 +1,10 @@
+<speak xmlns="http://www.w3.org/2001/10/synthesis" version="1.0">
+  <p>Welcome to this offline lesson.</p>
+  <break time="1500ms"/>
+  <p><prosody rate="slow" pitch="low">Listen slowly.
+    <prosody rate="fast" pitch="+20%">Nested adjustments apply here.</prosody>
+    Back to the slower voice.
+  </prosody></p>
+  <break time="1s"/>
+  <s>This is the final sentence.</s>
+</speak>

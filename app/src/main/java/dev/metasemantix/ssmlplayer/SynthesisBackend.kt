@@ -71,7 +71,7 @@ class AndroidTtsBackend private constructor() : SynthesisBackend {
                     @Deprecated("Legacy engine callback")
                     override fun onError(utteranceId: String?) { fail(utteranceId, "unknown") }
                     override fun onError(utteranceId: String?, errorCode: Int) { fail(utteranceId, errorCode.toString()) }
-                    override fun onStop(utteranceId: String?, interrupted: Boolean) { utteranceId?.let { backend.pending[it]?.cancel() } }
+                    override fun onStop(utteranceId: String?, interrupted: Boolean) { fail(utteranceId, "interrupted") }
                     private fun fail(id: String?, code: String) {
                         id?.let { backend.pending[it]?.completeExceptionally(IllegalStateException("TTS synthesis failed (engine error $code).")) }
                     }

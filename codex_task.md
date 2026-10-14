@@ -1,7 +1,7 @@
 # Codex task — Initial Android SSML Player
 
 ## Status
-Initial vertical slice implemented. Local tests/build/lint pass; device listening/background validation and GitHub CI execution remain pending. Implementation is on `feat/initial-android-player`; PR: https://github.com/metasemantix/ssml-player/pull/1.
+Initial vertical slice implemented. Local tests/build/lint and GitHub Actions APK delivery pass; device listening/background validation remains pending. Implementation is on `feat/initial-android-player`; PR: https://github.com/metasemantix/ssml-player/pull/1.
 
 ## Objective
 Create the first working Android app in this repository. A user can import or paste an SSML document, synthesize speech locally with an installed Android TTS engine, and listen hands-free. Deliver an installable debug APK via GitHub Actions.
@@ -45,7 +45,7 @@ Do not strip unsupported phoneme tags and pretend to have implemented phoneme co
 - [ ] Basic SSML produces intelligible offline audio and deliberate silence at breaks.
 - [ ] User can play/pause/stop; background/screen-off behavior is documented and tested where possible.
 - [x] Errors are surfaced instead of silently dropping instructions.
-- [ ] CI uploads a debug APK as a workflow artifact.
+- [x] CI uploads a debug APK as a workflow artifact.
 - [x] README and docs/ssml-support.md reflect actual implementation.
 - [x] Feature branch and pull request created, or limitation reported.
 
@@ -65,10 +65,12 @@ Do not strip unsupported phoneme tags and pretend to have implemented phoneme co
 
 - 2026-10-14: Review identified an engine-initiated stop that could leave rendering marked busy. Treat engine interruption as a visible synthesis error; user cancellation still cancels the render job. `./gradlew :app:lintDebug :app:assembleDebug` passed after this correction; zero lint issues. The replacement CI SDK bootstrap succeeded, and its build/test step is running.
 
+- 2026-10-14: **GitHub Actions passed** for final implementation commit `f81816e`: https://github.com/metasemantix/ssml-player/actions/runs/38636775928 (build job 3m34s). Tests/lint/build, APK signature/offline-permission checks, and both artifact uploads succeeded. `ssml-player-debug` contains the debug APK; `verification-reports` contains test/lint reports. This final task-log update changes documentation only. No device listening/background validation was performed.
+
 ## Open questions / implementation decisions
 - Android TTS is interchangeable via `SynthesisBackend`; offer installed voices reporting offline use and present initialization/synthesis errors. Android may fall back to the default engine if a requested engine cannot initialize; offline behavior and prosody must be tested with the installed voice.
 - Speech is rendered sequentially to app-private PCM16 WAVs (mono/stereo, 8–48 kHz), then Media3 plays a playlist of speech files and independently generated silence WAVs. No whole-lesson PCM buffer or re-encoding; file transitions may add latency beyond the requested silence. Gapless assembly/export is deferred.
 - Bounds: 128 Ki input characters, 32 nesting levels, 512 segments, 2,000 characters/chunk, 10 seconds/break, 120 seconds total explicit breaks, 32 MiB/engine file, 128 MiB/completed lesson. Split long documents when limits are reached.
 - Rendering requires keeping the app open and is not a rendering foreground service. Playback uses MediaSessionService/ExoPlayer with foreground media controls, audio focus, noisy-device handling, and local wake mode. Process-death/reboot playback restoration is deferred.
-- Import/paste, engine/voice choice, deliberate breaks, playback controls and notification lifecycle are implemented; their device acceptance boxes remain unchecked until the documented manual checklist is executed. CI workflow is committed, but artifact upload remains unchecked until a successful GitHub Actions run.
+- Import/paste, engine/voice choice, deliberate breaks, playback controls and notification lifecycle are implemented; their device acceptance boxes remain unchecked until the documented manual checklist is executed. CI workflow and debug APK artifact upload are verified by run 38636775928 for implementation commit f81816e; device checks remain pending.
 - Remaining verification: install APK on Android 10 and a current Android device; run airplane-mode TTS, import, pause/resume/stop/cancel, background/screen-off/headset/focus/task-removal, longer-document and cleanup checks from README. No cloud/IPA/say-as/production-signing support is claimed.

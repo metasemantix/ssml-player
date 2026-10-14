@@ -1,7 +1,7 @@
 # Codex task — Initial Android SSML Player
 
 ## Status
-Initial vertical slice implemented. Local tests/build/lint pass; device listening/background validation and GitHub CI execution remain pending. Final branch/PR status is recorded below.
+Initial vertical slice implemented. Local tests/build/lint pass; device listening/background validation and GitHub CI execution remain pending. Implementation is on `feat/initial-android-player`; PR: https://github.com/metasemantix/ssml-player/pull/1.
 
 ## Objective
 Create the first working Android app in this repository. A user can import or paste an SSML document, synthesize speech locally with an installed Android TTS engine, and listen hands-free. Deliver an installable debug APK via GitHub Actions.
@@ -47,7 +47,7 @@ Do not strip unsupported phoneme tags and pretend to have implemented phoneme co
 - [x] Errors are surfaced instead of silently dropping instructions.
 - [ ] CI uploads a debug APK as a workflow artifact.
 - [x] README and docs/ssml-support.md reflect actual implementation.
-- [ ] Feature branch and pull request created, or limitation reported.
+- [x] Feature branch and pull request created, or limitation reported.
 
 ## Progress log
 - 2026-10-14: Task specification created. No implementation or build verification yet.
@@ -57,7 +57,9 @@ Do not strip unsupported phoneme tags and pretend to have implemented phoneme co
 - 2026-10-14: Implemented strict parser, bounded PCM silence/WAV validation, replaceable local TTS backend, Compose import/editor/voice UI, and Media3 background playback service. First core run: 15 tests executed, 8 parser failures isolated to kXML2 rejecting an optional feature setter; correcting feature negotiation while keeping DTD processing disabled. Android build/lint validation ongoing. GitHub API CONNECT currently denied; saved `api.github.com` network addition for review.
 
 - 2026-10-14: Corrected kXML2 feature negotiation. `./gradlew :core:test`: **15 tests passed**, zero failures/errors/skips. `./gradlew :app:assembleDebug :app:lintDebug`: **BUILD SUCCESSFUL**; initial lint had two warnings (backup rules/icon), addressed with explicit extraction exclusions and a launcher icon. `apksigner verify --verbose app/build/outputs/apk/debug/app-debug.apk`: verified v2 signature, one signer. No physical device/emulator was available; audible offline synthesis and background controls are not claimed as device-verified.
-- 2026-10-14: Packaged APK inspection found a transitive Media3 ACCESS_NETWORK_STATE permission; explicitly removed it and INTERNET from the merged manifest. Confirmed Media3's network observer safely handles missing permission. Added CI checks for signature and absence of those permissions. `./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`: **BUILD SUCCESSFUL** (final core tests reused valid outputs; Android-specific unit task is NO-SOURCE, not additional tests). Final lint report: **0 issues**. Repeated APK signature verification and packaged-permission checks passed: no INTERNET or ACCESS_NETWORK_STATE permission. Debug APK is at `app/build/outputs/apk/debug/app-debug.apk`.
+- 2026-10-14: Packaged APK inspection found a transitive Media3 ACCESS_NETWORK_STATE permission; explicitly removed it and INTERNET from the merged manifest. Confirmed Media3's network observer safely handles missing permission. Added CI checks for signature and absence of those permissions. `./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`: **BUILD SUCCESSFUL** (final core tests reused valid outputs; Android-specific unit task is NO-SOURCE, not additional tests). Resolved a remaining legacy backup-configuration warning with explicit pre-Android-12 XML exclusions. `./gradlew :app:lintDebug :app:assembleDebug`: **BUILD SUCCESSFUL**, **zero lint issues**. Reverified the final APK signature and absence of network permissions. Repeated APK signature verification and packaged-permission checks passed: no INTERNET or ACCESS_NETWORK_STATE permission. Debug APK is at `app/build/outputs/apk/debug/app-debug.apk`.
+
+- 2026-10-14: Pushed `feat/initial-android-player` and opened PR #1: https://github.com/metasemantix/ssml-player/pull/1. GitHub API access became usable after the earlier network denial. Local APK/build/test checks passed; GitHub Actions result remains a separate check.
 
 ## Open questions / implementation decisions
 - Android TTS is interchangeable via `SynthesisBackend`; offer installed voices reporting offline use and present initialization/synthesis errors. Android may fall back to the default engine if a requested engine cannot initialize; offline behavior and prosody must be tested with the installed voice.

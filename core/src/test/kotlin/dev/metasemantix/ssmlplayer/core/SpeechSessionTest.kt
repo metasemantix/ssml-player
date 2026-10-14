@@ -181,6 +181,25 @@ class SpeechSessionTest {
         assertTrue(error.message!!.contains("initialization failed"))
         assertEquals("shutdown failed", error.suppressed.single().message)
     }
+    @Test fun failedStopRetiresEngineAndPreventsFurtherSubmission() = runTest {
+        val worker = StandardTestDispatcher(testScheduler)
+        lateinit var fake: FakeEngine
+        val session = SpeechSession.open(worker) { events ->
+            events.initialized(true)
+            object : FakeEngine(events) {
+                override fun stop() { super.stop(); error("stop failed") }
+            }.also { fake = it }
+        }
+        val render = launch { session.synthesize(speech, destination) }
+        fake.requests.receive()
+        render.cancelAndJoin()
+        assertTrue(session.isClosed)
+        assertEquals(1, fake.shutdown.get())
+        val retry = runCatching { session.selectVoice("offline") }.exceptionOrNull()
+        assertEquals("Speech engine is closed.", retry?.message)
+        session.close()
+        assertEquals(1, fake.shutdown.get())
+    }
     @Test fun missingSynthesisCallbackTimesOutAndStopsBeforeRetry() = runTest {
         val worker = StandardTestDispatcher(testScheduler)
         lateinit var fake: FakeEngine

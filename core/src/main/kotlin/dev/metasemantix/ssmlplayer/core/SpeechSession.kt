@@ -36,6 +36,7 @@ interface SpeechEvents {
 class SpeechSession private constructor(private val worker: CoroutineDispatcher) {
     private var engine: SpeechEngine? = null
     private val closed = AtomicBoolean()
+    val isClosed: Boolean get() = closed.get()
     private val initialized = CompletableDeferred<Boolean>()
     private val pending = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     lateinit var catalog: SpeechCatalog
@@ -75,7 +76,14 @@ class SpeechSession private constructor(private val worker: CoroutineDispatcher)
         }
     }
     suspend fun stop() = withContext(NonCancellable + worker) {
-        try { engine?.stop() } finally {
+        try { engine?.stop() }
+        catch (error: Throwable) {
+            // A failed stop leaves engine state unknown. Retire it instead of submitting new work.
+            if (closed.compareAndSet(false, true)) {
+                try { engine?.shutdown() } catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
+            }
+            throw error
+        } finally {
             pending.values.forEach { it.cancel() }
             pending.clear()
         }

@@ -55,6 +55,6 @@ class AndroidTtsEngine(context: Context, engine: String?, events: SpeechEvents) 
             "Engine could not start synthesis. Check installed offline voice data."
         }
     }
-    override fun stop() { tts.stop() }
+    override fun stop() { check(tts.stop() == TextToSpeech.SUCCESS) { "Speech engine could not stop. Reload engines." } }
     override fun shutdown() { tts.shutdown() }
 }

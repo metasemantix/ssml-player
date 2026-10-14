@@ -1,7 +1,7 @@
 # Codex task — Initial Android SSML Player
 
 ## Status
-Initial vertical slice and focused PR threading/audio corrections implemented. Current local checks: 32 tests pass, build/lint/signature/offline permissions pass. CI for the review corrections is pending; previous milestone APK delivery passed. Device listening/background verification remains pending. Implementation is on `feat/initial-android-player`; PR: https://github.com/metasemantix/ssml-player/pull/1.
+Initial vertical slice and focused PR threading/audio corrections implemented. Current local checks: 33 tests pass, build/lint/signature/offline permissions pass. CI for the review corrections is pending; previous milestone APK delivery passed. Device listening/background verification remains pending. Implementation is on `feat/initial-android-player`; PR: https://github.com/metasemantix/ssml-player/pull/1.
 
 ## Objective
 Create the first working Android app in this repository. A user can import or paste an SSML document, synthesize speech locally with an installed Android TTS engine, and listen hands-free. Deliver an installable debug APK via GitHub Actions.
@@ -70,6 +70,8 @@ Do not strip unsupported phoneme tags and pretend to have implemented phoneme co
 - 2026-10-14 (PR review): Confirmed main-dispatcher Binder/file operations in TTS initialization, catalog/voice selection, synthesis submission, stop and shutdown; cancellation did not join prior work before cache deletion/reuse. Also identified unnecessary speech/silence playlist transitions and sample-rate changes. Implementing worker-dispatched engine lifecycle, ordered cancellation/cleanup, isolated render directories and streaming single-WAV assembly, with fake-engine and PCM regression tests. PR remains open and unmerged.
 
 - 2026-10-14 (PR review validation): `./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug` passed. **32 core tests passed**, zero failures/errors/skips (17 new regressions); Android unit task is NO-SOURCE. Lint: **zero issues**. APK signature and absence of INTERNET/ACCESS_NETWORK_STATE reverified. README/support matrix now describe single-WAV assembly, same-format requirements, engine padding, worker/cancellation semantics, transient disk bounds, and device profiling/waveform checks. No physical-device behavior claimed as verified.
+
+- 2026-10-14 (stop failure review): The native adapter also ignored the `TextToSpeech.stop()` error return. It now checks that result; failed stop retires/shuts down the session, clears pending callbacks, and requires engine reload rather than reusing unknown state. Added a cancellation/failed-stop regression. `./gradlew :core:test :app:lintDebug :app:assembleDebug` passed: **33 tests**, zero failures/errors/skips; zero lint issues. Physical Binder/engine behavior remains unverified.
 
 ## Open questions / implementation decisions
 - Android TTS is interchangeable via the `SpeechEngine` adapter and worker-dispatched `SpeechSession`; offer installed voices reporting offline use and present initialization/synthesis errors. Android may fall back to the default engine if a requested engine cannot initialize; offline behavior and prosody must be tested with the installed voice.

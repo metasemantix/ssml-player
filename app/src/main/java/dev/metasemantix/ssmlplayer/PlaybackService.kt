@@ -189,7 +189,12 @@ class PlaybackService : MediaSessionService() {
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
                 invalidateAudio()
-                update { copy(busy = false, status = "Render failed: ${error.message ?: "unknown engine error"}") }
+                update { copy(
+                    busy = false,
+                    voice = if (engine.isClosed) "" else voice,
+                    voices = if (engine.isClosed) emptyList() else voices,
+                    status = "Render failed: ${error.message ?: "unknown engine error"}" + if (engine.isClosed) " Reload engines." else "",
+                ) }
             } finally {
                 if (!published) withContext(NonCancellable + Dispatchers.IO) { directory.deleteRecursively() }
             }
@@ -213,7 +218,13 @@ class PlaybackService : MediaSessionService() {
         update { copy(busy = true, playing = false, status = "Stopping… Waiting for engine cleanup.") }
         operations.replace {
             if (!state.value.ready) clearAudio()
-            update { copy(busy = false, status = "Stopped.") }
+            val unavailable = backend?.isClosed == true
+            update { copy(
+                busy = false,
+                voice = if (unavailable) "" else voice,
+                voices = if (unavailable) emptyList() else voices,
+                status = if (unavailable) "Speech engine unavailable after cleanup. Reload engines." else "Stopped.",
+            ) }
         }
     }
     private fun invalidateAudio() {

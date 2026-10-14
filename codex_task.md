@@ -61,6 +61,8 @@ Do not strip unsupported phoneme tags and pretend to have implemented phoneme co
 
 - 2026-10-14: Pushed `feat/initial-android-player` and opened PR #1: https://github.com/metasemantix/ssml-player/pull/1. GitHub API access became usable after the earlier network denial. Local APK/build/test checks passed; GitHub Actions result remains a separate check.
 
+- 2026-10-14: GitHub Actions run 38636325547 failed at `android-actions/setup-android@v3`, before compilation/tests. Detailed log storage was denied by cloud egress policy. Replaced that SDK action with the same checksum-verified command-line tools 19.0 (13114758) and SDK 35 installation proven locally, with explicit license-command status handling. Updated checkout/setup-java to Node 24-compatible v5. CI rerun pending; no verification was bypassed.
+
 ## Open questions / implementation decisions
 - Android TTS is interchangeable via `SynthesisBackend`; offer installed voices reporting offline use and present initialization/synthesis errors. Android may fall back to the default engine if a requested engine cannot initialize; offline behavior and prosody must be tested with the installed voice.
 - Speech is rendered sequentially to app-private PCM16 WAVs (mono/stereo, 8–48 kHz), then Media3 plays a playlist of speech files and independently generated silence WAVs. No whole-lesson PCM buffer or re-encoding; file transitions may add latency beyond the requested silence. Gapless assembly/export is deferred.

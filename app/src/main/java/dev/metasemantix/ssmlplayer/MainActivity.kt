@@ -124,7 +124,7 @@ class MainActivity : ComponentActivity() {
             if (state.busy || importing) LinearProgressIndicator(Modifier.fillMaxWidth())
             importError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text(state.status, style = MaterialTheme.typography.bodyLarge)
-            Text("Engine rate/pitch and pronunciation vary. Unsupported SSML causes an error. Explicit breaks use timed PCM silence; segment transitions may add a small gap.")
+            Text("Engine rate/pitch and pronunciation vary. Unsupported SSML causes an error. Explicit breaks are inserted into one PCM lesson. The engine may add silence within its speech output.")
         }
     }
 }

@@ -13,14 +13,16 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
-import dev.metasemantix.ssmlplayer.core.PcmWav
+import dev.metasemantix.ssmlplayer.core.PcmAssembler
+import dev.metasemantix.ssmlplayer.core.SerializedOperations
+import dev.metasemantix.ssmlplayer.core.SpeechSession
 import dev.metasemantix.ssmlplayer.core.Segment
-import dev.metasemantix.ssmlplayer.core.SilenceWav
 import dev.metasemantix.ssmlplayer.core.SsmlParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
@@ -29,6 +31,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 // Only metadata and local paths enter Media3; SSML and speech never leave this process/device.
 data class Choice(val id: String, val label: String)
@@ -45,7 +49,10 @@ data class PlayerState(
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlaybackService : MediaSessionService() {
-    companion object { const val LOCAL_BIND = "dev.metasemantix.ssmlplayer.LOCAL_BIND" }
+    companion object {
+        const val LOCAL_BIND = "dev.metasemantix.ssmlplayer.LOCAL_BIND"
+        private val activeCaches = ConcurrentHashMap.newKeySet<String>()
+    }
     inner class LocalBinder : Binder() { val service: PlaybackService get() = this@PlaybackService }
     private val binder = LocalBinder()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -54,13 +61,15 @@ class PlaybackService : MediaSessionService() {
     private lateinit var player: ExoPlayer
     private lateinit var session: MediaSession
     private lateinit var audioDir: File
-    private var backend: AndroidTtsBackend? = null
-    private var operation: Job? = null
+    private var backend: SpeechSession? = null
+    private val operations = SerializedOperations(scope)
+    private var cacheScavenged = false
 
     override fun onCreate() {
         super.onCreate()
-        audioDir = File(cacheDir, "rendered-audio").apply { mkdirs() }
-        audioDir.listFiles()?.forEach { it.deleteRecursively() }
+        // A destroyed service's delayed worker cleanup must not remove a new instance's files.
+        audioDir = File(cacheDir, "rendered-audio/${UUID.randomUUID()}")
+        activeCaches.add(audioDir.absolutePath)
         player = ExoPlayer.Builder(this).build().apply {
             setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_SPEECH).build(), true)
             setHandleAudioBecomingNoisy(true)
@@ -86,23 +95,32 @@ class PlaybackService : MediaSessionService() {
     private fun update(block: PlayerState.() -> PlayerState) { mutableState.value = mutableState.value.block() }
 
     fun chooseEngine(engine: String?) {
-        cancelOperation()
-        clearAudio()
-        backend?.close()
-        backend = null
-        update { copy(busy = true, ready = false, playing = false, voices = emptyList(), voice = "", status = "Loading offline voices…") }
-        operation = scope.launch {
+        invalidateAudio()
+        update { copy(busy = true, voices = emptyList(), voice = "", status = "Loading offline voices…") }
+        operations.replace {
             try {
-                val opened = AndroidTtsBackend.open(this@PlaybackService, engine)
+                clearAudio()
+                if (!cacheScavenged) {
+                    withContext(Dispatchers.IO) {
+                        // After process death the registry is empty; don't scavenge another live
+                        // service instance still waiting for its cancelled Binder call to return.
+                        audioDir.parentFile?.listFiles()?.filter { it.absolutePath !in activeCaches }
+                            ?.forEach { it.deleteRecursively() }
+                    }
+                    cacheScavenged = true
+                }
+                backend?.close()
+                backend = null
+                val opened = SpeechSession.open { events -> AndroidTtsEngine(this@PlaybackService, engine, events) }
                 backend = opened
-                val voices = opened.offlineVoices
+                val catalog = opened.catalog
                 update { copy(
-                    engines = opened.engines.map { Choice(it.name, it.label) },
-                    engine = engine ?: opened.engineName,
-                    voices = voices.map { Choice(it.name, "${it.locale.toLanguageTag()} — ${it.name}") },
-                    voice = voices.firstOrNull()?.name.orEmpty(),
+                    engines = catalog.engines.map { Choice(it.id, it.label) },
+                    engine = engine ?: catalog.defaultEngine,
+                    voices = catalog.voices.map { Choice(it.id, it.label) },
+                    voice = catalog.voices.firstOrNull()?.id.orEmpty(),
                     busy = false,
-                    status = if (voices.isEmpty()) "No offline voices. Install voice data in Android TTS settings, then reload engines." else "Ready. Select an offline voice, then render SSML."
+                    status = if (catalog.voices.isEmpty()) "No offline voices. Install voice data in Android TTS settings, then reload engines." else "Ready. Select an offline voice, then render SSML."
                 ) }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { update { copy(busy = false, status = error.message ?: "TTS initialization failed.") } }
@@ -110,62 +128,70 @@ class PlaybackService : MediaSessionService() {
     }
 
     fun chooseVoice(name: String) {
-        if (state.value.busy) return
-        if (state.value.voices.none { it.id == name }) return
-        clearAudio()
+        if (state.value.busy || state.value.voices.none { it.id == name }) return
+        invalidateAudio()
+        operations.replace { clearAudio() }
         update { copy(voice = name, status = "Voice selected. Render the document to listen.") }
     }
 
     fun documentChanged() {
         if (state.value.busy) return
-        clearAudio()
+        invalidateAudio()
+        operations.replace { clearAudio() }
         update { copy(status = "Document changed. Render it to listen.") }
     }
 
     fun render(xml: String) {
         if (state.value.busy) return
-        val document = try { SsmlParser().parse(xml) } catch (error: Exception) {
-            update { copy(status = error.message ?: "Invalid SSML.") }; return
-        }
         val engine = backend ?: run { update { copy(status = "No speech engine is ready. Reload engines.") }; return }
-        if (state.value.voice.isEmpty()) { update { copy(status = "Select an installed offline voice first.") }; return }
-        cancelOperation()
-        clearAudio()
+        val voice = state.value.voice
+        if (voice.isEmpty()) { update { copy(status = "Select an installed offline voice first.") }; return }
+        invalidateAudio()
         update { copy(busy = true, status = "Rendering locally… Keep the app open until ready.") }
-        operation = scope.launch {
+        operations.replace {
+            val directory = File(audioDir, UUID.randomUUID().toString())
+            var published = false
             try {
-                engine.selectVoice(state.value.voice)
-                val files = mutableListOf<File>()
-                var totalBytes = 0L
-                for ((index, segment) in document.segments.withIndex()) {
-                    ensureActive()
-                    update { copy(status = "Rendering segment ${index + 1}/${document.segments.size}… Keep the app open.") }
-                    if (segment is Segment.Silence && segment.milliseconds == 0L) continue
-                    val file = File(audioDir, "$index.wav")
-                    when (segment) {
-                        is Segment.Speech -> {
-                            engine.synthesize(segment, file)
-                            withContext(Dispatchers.IO) { PcmWav.validate(file) }
+                val document = withContext(Dispatchers.IO) { SsmlParser().parse(xml) }
+                clearAudio()
+                engine.selectVoice(voice)
+                val lesson = withContext(Dispatchers.IO) {
+                    check(directory.mkdirs()) { "Cannot create local audio cache." }
+                    val output = File(directory, "lesson.wav")
+                    val renderJob = coroutineContext.job
+                    PcmAssembler(output).use { assembly ->
+                        for ((index, segment) in document.segments.withIndex()) {
+                            ensureActive()
+                            withContext(Dispatchers.Main) {
+                                update { copy(status = "Rendering segment ${index + 1}/${document.segments.size}… Keep the app open.") }
+                            }
+                            when (segment) {
+                                is Segment.Speech -> {
+                                    val speech = File(directory, "speech.wav")
+                                    engine.synthesize(segment, speech)
+                                    assembly.appendSpeech(speech) { renderJob.ensureActive() }
+                                    check(speech.delete()) { "Cannot clean up temporary speech audio." }
+                                }
+                                is Segment.Silence -> assembly.appendSilence(segment.milliseconds) { renderJob.ensureActive() }
+                            }
                         }
-                        is Segment.Silence -> withContext(Dispatchers.IO) {
-                            file.outputStream().buffered().use { SilenceWav.write(it, segment.milliseconds) }
-                        }
+                        ensureActive()
+                        assembly.finish()
                     }
-                    totalBytes += file.length()
-                    check(totalBytes <= 128L * 1024 * 1024) { "Rendered audio exceeds 128 MiB. Split the document into smaller lessons." }
-                    files += file
+                    output
                 }
-                player.setMediaItems(files.mapIndexed { index, file ->
-                    MediaItem.Builder().setUri(android.net.Uri.fromFile(file)).setMediaId(index.toString())
-                        .setMediaMetadata(MediaMetadata.Builder().setTitle("SSML lesson").setArtist("Offline speech").build()).build()
-                })
+                ensureActive()
+                player.setMediaItem(MediaItem.Builder().setUri(android.net.Uri.fromFile(lesson)).setMediaId("lesson")
+                    .setMediaMetadata(MediaMetadata.Builder().setTitle("SSML lesson").setArtist("Offline speech").build()).build())
                 player.prepare()
-                update { copy(busy = false, ready = true, status = "Rendered ${files.size} segments locally. Press Play.") }
+                published = true
+                update { copy(busy = false, ready = true, status = "Rendered ${document.segments.size} segments into one local lesson. Press Play.") }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
-                engine.stop()
-                clearAudio()
+                invalidateAudio()
                 update { copy(busy = false, status = "Render failed: ${error.message ?: "unknown engine error"}") }
+            } finally {
+                if (!published) withContext(NonCancellable + Dispatchers.IO) { directory.deleteRecursively() }
             }
         }
     }
@@ -182,27 +208,43 @@ class PlaybackService : MediaSessionService() {
         }
     }
     fun stop() {
-        cancelOperation()
         player.pause()
-        if (state.value.ready) player.seekToDefaultPosition(0) else clearAudio()
-        update { copy(busy = false, playing = false, status = "Stopped.") }
+        if (state.value.ready) player.seekToDefaultPosition(0)
+        update { copy(busy = true, playing = false, status = "Stopping… Waiting for engine cleanup.") }
+        operations.replace {
+            if (!state.value.ready) clearAudio()
+            update { copy(busy = false, status = "Stopped.") }
+        }
     }
-    private fun cancelOperation() { operation?.cancel(); operation = null; backend?.stop() }
-    private fun clearAudio() {
+    private fun invalidateAudio() {
         player.stop()
         player.clearMediaItems()
-        audioDir.listFiles()?.forEach { it.delete() }
         update { copy(ready = false, playing = false) }
+    }
+    private suspend fun clearAudio() {
+        // Player calls stay on Main; file operations wait for prior engine/assembly cleanup on IO.
+        invalidateAudio()
+        withContext(Dispatchers.IO) {
+            audioDir.listFiles()?.forEach { it.deleteRecursively() }
+        }
     }
     override fun onTaskRemoved(rootIntent: Intent?) {
         if (!player.playWhenReady) { stop(); stopSelf() }
     }
     override fun onDestroy() {
+        val previous = operations.cancel()
         scope.cancel()
-        backend?.close()
+        // Lifecycle callbacks must return promptly even when an engine's Binder call is slow.
+        // Join first; then release the engine and only this service instance's cache directory.
+        CoroutineScope(Dispatchers.IO).launch {
+            try { previous?.join(); backend?.close() }
+            catch (error: Exception) { android.util.Log.w("SSML Player", "Speech engine cleanup failed.", error) }
+            finally {
+                try { audioDir.deleteRecursively() } finally { activeCaches.remove(audioDir.absolutePath) }
+            }
+        }
         session.release()
         player.release()
-        audioDir.deleteRecursively()
         super.onDestroy()
     }
 }
